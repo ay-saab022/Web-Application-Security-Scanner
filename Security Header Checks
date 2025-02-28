@@ -1,0 +1,113 @@
+import requests
+import sqlite3
+from reportlab.pdfgen import canvas
+
+
+SECURITY_HEADERS = [
+    "Content-Security-Policy",
+    "X-Frame-Options",
+    "Strict-Transport-Security",
+    "X-XSS-Protection",
+    "X-Content-Type-Options",
+    "Referrer-Policy",
+    "Permissions-Policy"
+]
+
+def check_security_headers(url):
+   
+    try:
+        response = requests.get(url, timeout=5)
+        headers = response.headers
+
+        print(f"🔍 Checking security headers for {url}\n")
+
+        missing_headers = []
+        for header in SECURITY_HEADERS:
+            if header not in headers:
+                missing_headers.append(header)
+                print(f"⚠️ MISSING: {header}")
+            else:
+                print(f"✅ FOUND: {header} ➝ {headers[header]}")
+
+        if not missing_headers:
+            print("\n✅ All recommended security headers are present!")
+        else:
+            print("\n⚠️ Security risk: Some important headers are missing.")
+
+        return missing_headers
+
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Error checking {url}: {e}")
+        return []
+
+
+conn = sqlite3.connect('scanner.db')
+cursor = conn.cursor()
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS security_headers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        url TEXT,
+        missing_headers TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+""")
+conn.commit()
+
+
+def store_security_header_results(url, missing_headers):
+    if not missing_headers:
+        return
+    
+    cursor.execute("INSERT INTO security_headers (url, missing_headers) VALUES (?, ?)", (url, ", ".join(missing_headers)))
+    conn.commit()
+    print(f"✅ Stored security headers for {url}")
+
+
+def check_security_headers(url):
+  
+    try:
+        response = requests.get(url, timeout=5)
+        headers = response.headers
+
+        missing_headers = []
+        for header in SECURITY_HEADERS:
+            if header not in headers:
+                missing_headers.append(header)
+
+        if missing_headers:
+            store_security_header_results(url, missing_headers)
+        
+        return missing_headers
+
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Error checking {url}: {e}")
+        return []
+
+
+def generate_security_report(url, missing_headers):
+   
+    filename = f"security_report_{url.replace('https://', '').replace('/', '_')}.pdf"
+    c = canvas.Canvas(filename)
+    
+    c.drawString(100, 800, f"Security Header Report for {url}")
+    c.drawString(100, 780, f"Timestamp: CURRENT TIME")
+
+    y = 750
+    for header in missing_headers:
+        c.drawString(100, y, f"⚠️ Missing: {header}")
+        y -= 30
+
+    c.save()
+    print(f"✅ Report saved as {filename}")
+
+
+websites = [
+    "https://example.com",
+    "https://secure-site.com",
+    "https://testsite.com"
+]
+
+for site in websites:
+    missing = check_security_headers(site)
+    if missing:
+        generate_security_report(site, missing)
